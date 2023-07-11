@@ -4,7 +4,7 @@
 *.dll
 *.so
 *.dylib
-sensu-iptables-metricss
+sensu-iptables-metrics
 
 # Test binary, build with `go test -c`
 *.test
