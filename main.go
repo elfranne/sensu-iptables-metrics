@@ -24,9 +24,9 @@ type Config struct {
 var (
 	plugin = Config{
 		PluginConfig: sensu.PluginConfig{
-			Name:     "check-cpu-usage",
-			Short:    "Check CPU usage and provide metrics",
-			Keyspace: "sensu.io/plugins/check-cpu-usage/config",
+			Name:     "metrics-iptables",
+			Short:    "metrics for iptables",
+			Keyspace: "sensu.io/plugins/metrics-iptables/config",
 		},
 	}
 
@@ -44,7 +44,7 @@ var (
 			Argument:  "ftype",
 			Shorthand: "f",
 			Default:   "iptables",
-			Usage:     "type of firewall (generaaly iptables or iptables-nft)",
+			Usage:     "type of firewall (generally iptables or iptables-nft)",
 			Value:     &plugin.ftype,
 		},
 		&sensu.PluginConfigOption[string]{
@@ -71,7 +71,7 @@ func checkArgs(event *corev2.Event) (int, error) {
 }
 
 func executeCheck(event *corev2.Event) (int, error) {
-	regex := regexp.MustCompile(`\s+(\d+)\s+(\d+).*?/\*\s+(\d+)\s+([A-Za-z0-9_\-\s+]+)\s+\*/`)
+	regex := regexp.MustCompile(`\s*(\d+)\s+(\d+).*?/\*\s+(\d+)\s+([A-Za-z0-9_\-\s+]+)\s+\*/`)
 	out, err := exec.Command(plugin.bin, plugin.ftype, "-L", "-nvx").CombinedOutput()
 	if err != nil {
 		log.Fatalf("failed with %s %s\n", out, err)
@@ -79,7 +79,9 @@ func executeCheck(event *corev2.Event) (int, error) {
 	rules := bufio.NewScanner(strings.NewReader(string(out)))
 	for rules.Scan() {
 		splitted := regex.FindStringSubmatch(rules.Text())
-		// fmt.Println(splitted[1], splitted[2], splitted[3], splitted[4])
+		// if len(splitted) > 0 {
+		// 	fmt.Println(splitted)
+		// }
 		if len(splitted) == 5 {
 			fmt.Printf("%s.iptables.packets.%s.%s %s %d\n", plugin.Scheme, splitted[3], strings.ReplaceAll(splitted[4], " ", "_"), splitted[1], time.Now().Unix())
 			fmt.Printf("%s.iptables.bytes.%s.%s %s %d\n", plugin.Scheme, splitted[3], strings.ReplaceAll(splitted[4], " ", "_"), splitted[2], time.Now().Unix())
