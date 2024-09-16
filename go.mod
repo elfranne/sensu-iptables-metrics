@@ -1,6 +1,6 @@
 module github.com/elfranne/sensu-iptables-metrics
 
-go 1.21
+go 1.23.1
 
 require (
 	github.com/sensu/core/v2 v2.20.0
