@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
-	"log"
+	"io"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -56,6 +58,11 @@ var (
 			Value:     &plugin.Scheme,
 		},
 	}
+
+	// ruleRE matches a rule line of `iptables -L -nvx` that carries a
+	// `/* <id> <name> */` comment, capturing packets, bytes, id and name.
+	// Chain headers and column headers do not match: they have no comment.
+	ruleRE = regexp.MustCompile(`\s*(\d+)\s+(\d+).*?/\*\s+(\d+)\s+([A-Za-z0-9_\-\s+]+)\s+\*/`)
 )
 
 func main() {
@@ -70,22 +77,41 @@ func checkArgs(event *corev2.Event) (int, error) {
 	return sensu.CheckStateOK, nil
 }
 
+// writeMetrics scans `iptables -L -nvx` output from r and writes graphite
+// plaintext metrics to w: one packets line and one bytes line for every rule
+// tagged with a `/* <id> <name> */` comment. Untagged rules, chain headers and
+// column headers are ignored.
+//
+// The -x flag is load-bearing: without it iptables abbreviates counters
+// ("571K"), which would be parsed as a plain 571.
+func writeMetrics(w io.Writer, r io.Reader, scheme string, ts int64) error {
+	rules := bufio.NewScanner(r)
+	for rules.Scan() {
+		matched := ruleRE.FindStringSubmatch(rules.Text())
+		if len(matched) != 5 {
+			continue
+		}
+		name := strings.ReplaceAll(matched[4], " ", "_")
+		if _, err := fmt.Fprintf(w, "%s.iptables.packets.%s.%s %s %d\n", scheme, matched[3], name, matched[1], ts); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "%s.iptables.bytes.%s.%s %s %d\n", scheme, matched[3], name, matched[2], ts); err != nil {
+			return err
+		}
+	}
+	return rules.Err()
+}
+
 func executeCheck(event *corev2.Event) (int, error) {
-	regex := regexp.MustCompile(`\s*(\d+)\s+(\d+).*?/\*\s+(\d+)\s+([A-Za-z0-9_\-\s+]+)\s+\*/`)
 	out, err := exec.Command(plugin.bin, plugin.ftype, "-L", "-nvx").CombinedOutput()
 	if err != nil {
-		log.Fatalf("failed with %s %s\n", out, err)
+		return sensu.CheckStateCritical, fmt.Errorf("%s %s -L -nvx: %w: %s",
+			plugin.bin, plugin.ftype, err, bytes.TrimSpace(out))
 	}
-	rules := bufio.NewScanner(strings.NewReader(string(out)))
-	for rules.Scan() {
-		splitted := regex.FindStringSubmatch(rules.Text())
-		// if len(splitted) > 0 {
-		// 	fmt.Println(splitted)
-		// }
-		if len(splitted) == 5 {
-			fmt.Printf("%s.iptables.packets.%s.%s %s %d\n", plugin.Scheme, splitted[3], strings.ReplaceAll(splitted[4], " ", "_"), splitted[1], time.Now().Unix())
-			fmt.Printf("%s.iptables.bytes.%s.%s %s %d\n", plugin.Scheme, splitted[3], strings.ReplaceAll(splitted[4], " ", "_"), splitted[2], time.Now().Unix())
-		}
+	// One timestamp for the whole scrape, so every metric of a single run
+	// shares it even if the scan crosses a second boundary.
+	if err := writeMetrics(os.Stdout, bytes.NewReader(out), plugin.Scheme, time.Now().Unix()); err != nil {
+		return sensu.CheckStateCritical, err
 	}
 	return sensu.CheckStateOK, nil
 }
