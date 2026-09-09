@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## Unreleased
 
+## [0.4.0] - 2026-09-09
+
 ### Added
 - CI now runs `go vet`, builds, and runs the tests with `-race` plus a coverage summary.
 - Workflows declare least-privilege `permissions` and cancel superseded runs via a
@@ -78,6 +80,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Initial release: collects packet and byte counters from iptables rules tagged with a
   `/* <id> <name> */` comment and emits them as Graphite plaintext metrics.
 
+[0.4.0]: https://github.com/elfranne/sensu-iptables-metrics/releases/tag/0.4.0
 [0.3.1]: https://github.com/elfranne/sensu-iptables-metrics/releases/tag/0.3.1
 [0.3]: https://github.com/elfranne/sensu-iptables-metrics/releases/tag/0.3
 [0.2.0]: https://github.com/elfranne/sensu-iptables-metrics/releases/tag/0.2.0
