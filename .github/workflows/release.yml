@@ -6,18 +6,28 @@ on:
     tags:
       - '*'
 
+permissions:
+  contents: read
+
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+    permissions:
+      # Required for goreleaser to create the GitHub release and upload assets.
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
-      - name: Unshallow
-        run: git fetch --prune --unshallow
+        with:
+          # goreleaser needs the full history and all tags to build the changelog
+          # and derive the version.
+          fetch-depth: 0
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
+      - name: Test
+        run: go test ./...
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
