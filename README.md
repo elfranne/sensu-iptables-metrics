@@ -1,54 +1,130 @@
 [![Sensu Bonsai Asset](https://img.shields.io/badge/Bonsai-Download%20Me-brightgreen.svg?colorB=89C967&logo=sensu)](https://bonsai.sensu.io/assets/elfranne/sensu-iptables-metrics)
 ![Go Test](https://github.com/elfranne/sensu-iptables-metrics/workflows/Go%20Test/badge.svg)
+![Go Lint](https://github.com/elfranne/sensu-iptables-metrics/workflows/Go%20Lint/badge.svg)
 ![goreleaser](https://github.com/elfranne/sensu-iptables-metrics/workflows/goreleaser/badge.svg)
-
-# Check Plugin Template
-
-## Overview
-check-plugin-template is a template repository which wraps the [Sensu Plugin SDK][2].
-To use this project as a template, click the "Use this template" button from the main project page.
-Once the repository is created from this template, you can use the [Sensu Plugin Tool][9] to
-populate the templated fields with the proper values.
-
-## Functionality
-
-After successfully creating a project from this template, update the `Config` struct with any
-configuration options for the plugin, map those values as plugin options in the variable `options`,
-and customize the `checkArgs` and `executeCheck` functions in [main.go][7].
-
-When writing or updating a plugin's README from this template, review the Sensu Community
-[plugin README style guide][3] for content suggestions and guidance. Remove everything
-prior to `# sensu-iptables-metrics` from the generated README file, and add additional context about the
-plugin per the style guide.
-
-## Releases with Github Actions
-
-To release a version of your project, simply tag the target sha with a semver release without a `v`
-prefix (ex. `1.0.0`). This will trigger the [GitHub action][5] workflow to [build and release][4]
-the plugin with goreleaser. Register the asset with [Bonsai][8] to share it with the community!
-
-***
 
 # sensu-iptables-metrics
 
 ## Table of Contents
 - [Overview](#overview)
-- [Files](#files)
+- [How it works](#how-it-works)
+  - [Tagging your rules](#tagging-your-rules)
+  - [Output format](#output-format)
 - [Usage examples](#usage-examples)
+  - [Help output](#help-output)
+  - [Command line](#command-line)
 - [Configuration](#configuration)
   - [Asset registration](#asset-registration)
   - [Check definition](#check-definition)
+  - [Permissions](#permissions)
 - [Installation from source](#installation-from-source)
-- [Additional notes](#additional-notes)
 - [Contributing](#contributing)
 
 ## Overview
 
-The sensu-iptables-metrics is a [Sensu Check][6] that ...
+`sensu-iptables-metrics` is a [Sensu Check][6] that reads the packet and byte counters
+attached to your firewall rules and emits them as [Graphite plaintext][11] metrics.
 
-## Files
+Rather than reporting on every rule in the ruleset — which produces unstable metric names as
+soon as a rule is inserted or reordered — the plugin only reports on rules you have explicitly
+tagged with a comment. That makes the metric names stable, and lets you decide exactly which
+traffic is worth graphing.
+
+It supports both the legacy `iptables` and the nftables-backed `iptables-nft` backends through
+the `--bin` and `--ftype` flags.
+
+## How it works
+
+The plugin runs the equivalent of:
+
+```
+/usr/sbin/xtables-legacy-multi iptables -L -nvx
+```
+
+and scans the output for rules carrying a comment of the form `/* <id> <name> */`, where
+`<id>` is a number and `<name>` is a label. Both the packet and byte counters of every matching
+rule are emitted. Untagged rules and chain headers are ignored.
+
+`-x` is what makes this reliable: it prints exact counters, so you never get the `1234K` /
+`5M` rounding that plain `-L -nv` produces.
+
+### Tagging your rules
+
+Add a comment to any rule you want measured, using the `comment` match:
+
+```
+iptables -A INPUT -p tcp --dport 80 -m comment --comment "10 http" -j ACCEPT
+iptables -A INPUT -p tcp --dport 443 -m comment --comment "20 https" -j ACCEPT
+iptables -A INPUT -p tcp --dport 22 -m comment --comment "30 ssh admin" -j ACCEPT
+```
+
+The leading number is a sort key: it becomes part of the metric path, so you can keep a stable
+ordering in your dashboards independently of the position of the rule in the chain. The label may
+contain letters, digits, spaces, underscores, hyphens and plus signs; spaces are converted to
+underscores in the emitted metric name.
+
+### Output format
+
+Two metrics are emitted per tagged rule:
+
+```
+<scheme>.iptables.packets.<id>.<name> <count> <timestamp>
+<scheme>.iptables.bytes.<id>.<name> <count> <timestamp>
+```
+
+For the rules above, on a host checked in as `web01`:
+
+```
+web01.iptables.packets.10.http 48123 1757404800
+web01.iptables.bytes.10.http 7412998 1757404800
+web01.iptables.packets.20.https 991204 1757404800
+web01.iptables.bytes.20.https 1044238812 1757404800
+web01.iptables.packets.30.ssh_admin 812 1757404800
+web01.iptables.bytes.30.ssh_admin 64291 1757404800
+```
+
+Note that these are the raw kernel counters, which are cumulative and reset when the rule is
+replaced or the ruleset is reloaded. Treat them as counters in your time-series backend
+(`nonNegativeDerivative` in Graphite, `rate()` in Prometheus-style tooling).
 
 ## Usage examples
+
+### Help output
+
+```
+metrics for iptables
+
+Usage:
+  metrics-iptables [flags]
+  metrics-iptables [command]
+
+Available Commands:
+  completion  Generate the autocompletion script for the specified shell
+  help        Help about any command
+  version     Print the version number of this plugin
+
+Flags:
+  -b, --bin string      location of the firewall binary (default "/usr/sbin/xtables-legacy-multi")
+  -f, --ftype string    type of firewall (generally iptables or iptables-nft) (default "iptables")
+  -h, --help            help for metrics-iptables
+  -s, --scheme string   Scheme to prepend metric
+
+Use "metrics-iptables [command] --help" for more information about a command.
+```
+
+### Command line
+
+Legacy iptables (the default):
+
+```
+sensu-iptables-metrics --scheme $(hostname -s)
+```
+
+nftables backend:
+
+```
+sensu-iptables-metrics --scheme $(hostname -s) --bin /usr/sbin/xtables-nft-multi --ftype iptables-nft
+```
 
 ## Configuration
 
@@ -62,7 +138,8 @@ following command to add the asset:
 sensuctl asset add elfranne/sensu-iptables-metrics
 ```
 
-If you're using an earlier version of sensuctl, you can find the asset on the [Bonsai Asset Index][https://bonsai.sensu.io/assets/elfranne/sensu-iptables-metrics].
+If you're using an earlier version of sensuctl, you can find the asset on the
+[Bonsai Asset Index](https://bonsai.sensu.io/assets/elfranne/sensu-iptables-metrics).
 
 ### Check definition
 
@@ -74,12 +151,26 @@ metadata:
   name: sensu-iptables-metrics
   namespace: default
 spec:
-  command: sensu-iptables-metrics --example example_arg
+  command: sensu-iptables-metrics --scheme {{ .name }}
   subscriptions:
   - system
   runtime_assets:
   - elfranne/sensu-iptables-metrics
+  interval: 60
+  publish: true
+  output_metric_format: graphite_plaintext
+  output_metric_handlers:
+  - graphite
 ```
+
+`--scheme` is required; the check exits `WARNING` without it. Using the `{{ .name }}` token
+prefixes every metric with the entity name, which is usually what you want.
+
+### Permissions
+
+Reading iptables counters requires `CAP_NET_ADMIN`, so the check normally has to run as root.
+The Sensu agent typically already does; if yours does not, grant the capability to the firewall
+binary or run the check through `sudo`.
 
 ## Installation from source
 
@@ -93,19 +184,17 @@ From the local path of the sensu-iptables-metrics repository:
 go build
 ```
 
-## Additional notes
+Run the tests with:
+
+```
+go test ./...
+```
 
 ## Contributing
 
 For more information about contributing to this plugin, see [Contributing][1].
 
 [1]: https://github.com/sensu/sensu-go/blob/master/CONTRIBUTING.md
-[2]: https://github.com/sensu/sensu-plugin-sdk
-[3]: https://github.com/sensu-plugins/community/blob/master/PLUGIN_STYLEGUIDE.md
-[4]: https://github.com/elfranne/sensu-iptables-metrics/blob/master/.github/workflows/release.yml
-[5]: https://github.com/elfranne/sensu-iptables-metrics/actions
 [6]: https://docs.sensu.io/sensu-go/latest/reference/checks/
-[7]: https://github.com/sensu/check-plugin-template/blob/master/main.go
-[8]: https://bonsai.sensu.io/
-[9]: https://github.com/sensu/sensu-plugin-tool
 [10]: https://docs.sensu.io/sensu-go/latest/reference/assets/
+[11]: https://graphite.readthedocs.io/en/latest/feeding-carbon.html#the-plaintext-protocol
