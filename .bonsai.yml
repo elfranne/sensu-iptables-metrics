@@ -43,3 +43,12 @@
     -  "entity.system.arch == 'arm'"
     -  "entity.system.arm_version == 6"
 
+  - platform: "linux"
+    arch: "armv5"
+    asset_filename: "#{repo}_#{version}_linux_armv5.tar.gz"
+    sha_filename: "#{repo}_#{version}_sha512-checksums.txt"
+    filter:
+    -  "entity.system.os == 'linux'"
+    -  "entity.system.arch == 'arm'"
+    -  "entity.system.arm_version == 5"
+
